@@ -256,12 +256,12 @@ static inline int RectifyGPUID(const int gpu_id) {
   return gpu_id == -1 ? CaffeCudaGetDevice() : gpu_id;
 }
 
-CUDAContext::CUDAContext(const int gpu_id)
+CAFFE2_GPU_API CUDAContext::CUDAContext(const int gpu_id)
     : gpu_id_(RectifyGPUID(gpu_id)), random_seed_(RandomNumberSeed()) {
   static Caffe2CudaInitializerHelper g_cuda_initializer_;
 }
 
-CUDAContext::CUDAContext(const DeviceOption& option)
+CAFFE2_GPU_API CUDAContext::CUDAContext(const DeviceOption& option)
     : gpu_id_(
           option.has_cuda_gpu_id() ? RectifyGPUID(option.cuda_gpu_id())
                                    : CaffeCudaGetDevice()),
@@ -273,12 +273,12 @@ CUDAContext::CUDAContext(const DeviceOption& option)
 }
 
 // shared mutex to lock out alloc / free during NCCL launches
-std::mutex& CUDAContext::mutex() {
+CAFFE2_GPU_API std::mutex& CUDAContext::mutex() {
   static std::mutex m;
   return m;
 }
 
-std::vector<long> CUDAContext::TotalMemoryByGpu() {
+CAFFE2_GPU_API std::vector<long> CUDAContext::TotalMemoryByGpu() {
   std::lock_guard<std::mutex> lock(CUDAContext::mutex());
   CAFFE_ENFORCE(
       FLAGS_caffe2_gpu_memory_tracking,
@@ -286,7 +286,7 @@ std::vector<long> CUDAContext::TotalMemoryByGpu() {
   return g_total_by_gpu_map;
 }
 
-std::vector<long> CUDAContext::MaxMemoryByGpu() {
+CAFFE2_GPU_API std::vector<long> CUDAContext::MaxMemoryByGpu() {
   std::lock_guard<std::mutex> lock(CUDAContext::mutex());
   CAFFE_ENFORCE(
       FLAGS_caffe2_gpu_memory_tracking,
@@ -321,7 +321,7 @@ void TrackMemoryAlloc(size_t nbytes) {
 }
 }
 
-std::pair<void*, MemoryDeleter> CUDAContext::New(size_t nbytes) {
+CAFFE2_GPU_API std::pair<void*, MemoryDeleter> CUDAContext::New(size_t nbytes) {
   // Lock the mutex
   std::lock_guard<std::mutex> lock(CUDAContext::mutex());
   // A one-time caffe2 cuda initializer.
@@ -359,7 +359,7 @@ std::pair<void*, MemoryDeleter> CUDAContext::New(size_t nbytes) {
   return {nullptr, Delete};
 }
 
-void CUDAContext::Delete(void* ptr) {
+CAFFE2_GPU_API void CUDAContext::Delete(void* ptr) {
   // lock the mutex
   std::lock_guard<std::mutex> lock(CUDAContext::mutex());
 
@@ -409,6 +409,11 @@ void CUDAContext::Delete(void* ptr) {
     break;
   }
   }
+}
+
+CAFFE2_GPU_API ThreadLocalCUDAObjects& CUDAContext::get_cuda_objects_()
+{
+  return cuda_objects_;
 }
 
 }  // namespace caffe2

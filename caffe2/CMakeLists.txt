@@ -140,15 +140,15 @@ if(USE_CUDA)
   # one cannot use PUBLIC/PRIVATE/INTERFACE for the target anymore. This
   # hack adds the PRIVATE keywords to CUDA_LIBRARIES so we can deal with
   # it. We will then manually add the cudart library as interface libs.
-  set(__tmp ${CUDA_LIBRARIES})
-  set(CUDA_LIBRARIES PRIVATE ${CUDA_LIBRARIES})
+  set(CUDA_LINK_LIBRARIES_KEYWORD PRIVATE)
+  list(APPEND CUDA_NVCC_FLAGS "-DCAFFE2_BUILD_GPU_LIB")
   if(CAFFE2_STATIC_LINK_CUDA)
     CUDA_ADD_LIBRARY(caffe2_gpu STATIC ${Caffe2_GPU_SRCS})
   else()
     CUDA_ADD_LIBRARY(caffe2_gpu ${Caffe2_GPU_SRCS})
   endif()
-  set(CUDA_LIBRARIES ${__tmp})
   target_link_libraries(caffe2_gpu INTERFACE caffe2::cudart)
+  target_compile_options(caffe2_gpu PRIVATE "-DCAFFE2_BUILD_GPU_LIB")
 
   target_include_directories(
       caffe2_gpu INTERFACE $<INSTALL_INTERFACE:include>)
