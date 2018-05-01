@@ -135,6 +135,8 @@ list(APPEND Caffe2_MAIN_LIBS caffe2_library)
 
 # ---[ CUDA library.
 if(USE_CUDA)
+  set(__tmp_CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS})
+
   # A hack to deal with cuda library dependencies and modern CMake: the
   # CUDA_ADD_LIBRARY includes a target_link_libraries, and as a result,
   # one cannot use PUBLIC/PRIVATE/INTERFACE for the target anymore. This
@@ -164,6 +166,8 @@ if(USE_CUDA)
   caffe2_interface_library(caffe2_gpu caffe2_gpu_library)
   list(APPEND Caffe2_MAIN_LIBS caffe2_gpu_library)
   install(TARGETS caffe2_gpu EXPORT Caffe2Targets DESTINATION lib)
+
+  set(CUDA_NVCC_FLAGS ${__tmp_CUDA_NVCC_FLAGS})
 endif()
 
 # ---[ Test binaries.
