@@ -272,6 +272,26 @@ CAFFE2_GPU_API CUDAContext::CUDAContext(const DeviceOption& option)
   DCHECK_EQ(option.device_type(), CUDA);
 }
 
+CAFFE2_GPU_API void CUDAContext::FinishDeviceComputation() {
+  cudaStreamSynchronize(cuda_objects_.GetStream(gpu_id_, stream_id_));
+  cudaError_t error = cudaGetLastError();
+  if (error != cudaSuccess) {
+    CAFFE_THROW("Encountered CUDA error: ", cudaGetErrorString(error));
+  }
+}
+
+CAFFE2_GPU_API cudaStream_t CUDAContext::cuda_stream(int gpu_id, int stream_id) {
+  return cuda_objects_.GetStream(gpu_id, stream_id);
+}
+
+CAFFE2_GPU_API cublasHandle_t CUDAContext::cublas_handle() {
+  return cuda_objects_.GetHandle(gpu_id_, stream_id_);
+}
+
+CAFFE2_GPU_API cudnnHandle_t CUDAContext::cudnn_handle() {
+  return cuda_objects_.GetCudnnHandle(gpu_id_, stream_id_);
+}
+
 // shared mutex to lock out alloc / free during NCCL launches
 CAFFE2_GPU_API std::mutex& CUDAContext::mutex() {
   static std::mutex m;

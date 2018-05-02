@@ -149,13 +149,7 @@ class CUDAContext final {
     ev->Record(CUDA, this, err_msg);
   }
 
-  void FinishDeviceComputation() {
-    cudaStreamSynchronize(cuda_objects_.GetStream(gpu_id_, stream_id_));
-    cudaError_t error = cudaGetLastError();
-    if (error != cudaSuccess) {
-      CAFFE_THROW("Encountered CUDA error: ", cudaGetErrorString(error));
-    }
-  }
+  CAFFE2_GPU_API void FinishDeviceComputation();
 
   inline int cuda_gpu_id() const {
     return gpu_id_;
@@ -169,17 +163,11 @@ class CUDAContext final {
     return cuda_stream(gpu_id_, stream_id_);
   }
 
-  static cudaStream_t cuda_stream(int gpu_id, int stream_id) {
-    return cuda_objects_.GetStream(gpu_id, stream_id);
-  }
+  CAFFE2_GPU_API static cudaStream_t cuda_stream(int gpu_id, int stream_id);
 
-  cublasHandle_t cublas_handle() {
-    return cuda_objects_.GetHandle(gpu_id_, stream_id_);
-  }
+  CAFFE2_GPU_API cublasHandle_t cublas_handle();
 
-  cudnnHandle_t cudnn_handle() {
-    return cuda_objects_.GetCudnnHandle(gpu_id_, stream_id_);
-  }
+  CAFFE2_GPU_API cudnnHandle_t cudnn_handle();
 
   curandGenerator_t& curand_generator() {
     if (!curand_generator_) {
@@ -213,7 +201,7 @@ class CUDAContext final {
         src,
         nbytes,
         cudaMemcpyDefault,
-        cuda_objects_.GetStream(gpu_id_, stream_id_)));
+		get_cuda_objects_().GetStream(gpu_id_, stream_id_)));
   }
 
   template <typename T, class SrcContext, class DstContext>
