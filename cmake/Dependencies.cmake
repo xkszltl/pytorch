@@ -316,12 +316,17 @@ if(BUILD_PYTHON)
 endif()
 
 # ---[ pybind11
-find_package(pybind11)
-if(pybind11_FOUND)
-  include_directories(${pybind11_INCLUDE_DIRS})
+find_package(pybind11 CONFIG)
+if(DEFINED pybind11_DIR)
+  get_target_property(pybind11_INCLUDE_DIRS pybind11::pybind11 INTERFACE_INCLUDE_DIRECTORIES)
 else()
-  include_directories(${PROJECT_SOURCE_DIR}/third_party/pybind11/include)
+  message("pybind11 config not found. Failback to legacy find.")
+  find_package(pybind11)
+  if(NOT pybind11_FOUND)
+    include_directories(${PROJECT_SOURCE_DIR}/third_party/pybind11/include)
+  endif()
 endif()
+include_directories(${pybind11_INCLUDE_DIRS})
 
 # ---[ MPI
 if(USE_MPI)
