@@ -49,12 +49,10 @@ class AT_CORE_API TypeIdentifier final : public at::IdWrapper<TypeIdentifier, ui
   friend bool operator<(TypeIdentifier lhs, TypeIdentifier rhs);
 
   // This is 8, because 0 is uint8_t (due to ScalarType BC constraint)
-  static constexpr TypeIdentifier uninitialized() {
-    return TypeIdentifier(8);
-  }
+  static constexpr TypeIdentifier uninitialized();
 
  private:
-  constexpr explicit TypeIdentifier(uint16_t id) : IdWrapper(id) {}
+  constexpr explicit TypeIdentifier(uint16_t id);
   friend class TypeMeta;
 };
 

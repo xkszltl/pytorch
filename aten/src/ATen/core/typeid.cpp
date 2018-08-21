@@ -52,6 +52,12 @@ TypeIdentifier TypeIdentifier::createTypeId() {
   return TypeIdentifier(new_value);
 }
 
+constexpr TypeIdentifier TypeIdentifier::uninitialized() {
+  return TypeIdentifier(8);
+}
+
+constexpr TypeIdentifier::TypeIdentifier(uint16_t id) : IdWrapper(id) {}
+
 CAFFE_DEFINE_KNOWN_TYPE(float);
 CAFFE_DEFINE_KNOWN_TYPE(int);
 CAFFE_DEFINE_KNOWN_TYPE(std::string);
