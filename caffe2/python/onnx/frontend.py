@@ -21,13 +21,14 @@ from caffe2.proto import caffe2_legacy_pb2
 from enum import Enum
 from onnx import (defs, checker, helper, numpy_helper, mapping,
                   ModelProto, GraphProto, NodeProto, AttributeProto, TensorProto, OperatorSetIdProto)
-from onnx.helper import make_tensor, make_tensor_value_info, make_attribute, make_model
+from onnx.helper import make_tensor, make_tensor_value_info, make_attribute, make_model, make_node
 import numpy as np
 
 from caffe2.python.onnx.helper import c2_native_run_net
 from caffe2.python.onnx.error import Unsupported
 
 import caffe2.python._import_c_extension as C
+from caffe2.python import model_helper, workspace
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -73,8 +74,33 @@ class Caffe2Frontend(object):
         'Transpose': {'axes': 'perm'},
     }
 
-    _special_operators = {}
+    _special_operators = {
+        'RecurrentNetwork': '_create_rnn_variant',
+    }
 
+    _skipped_operators = {
+        'FC': 'None',
+    }
+
+    _rnn_operators = {
+        'RecurrentNetwork': 'None',
+        'RecurrentNetworkGradient': 'None',
+    }
+
+    _rnn_blob_name_args = {
+        'alias_dst' :'None',
+        'alias_src' :'None',
+        'backward_step_net': 'None',
+        'link_external': 'None',
+        'link_internal': 'None',
+        'param_grads': 'None',
+        'recompute_blos_on_backward': 'None',
+        'recurrent_states': 'None',
+        'timestep': 'None',
+    }
+
+    _renamed_inputs = {}
+    _initialize= {}
     # Dummy name generator
     _dummy_name = C.DummyName()
 
@@ -104,6 +130,8 @@ class Caffe2Frontend(object):
             value = arg.ints
         elif arg.strings:
             value = arg.strings
+        elif arg.n:
+            return None
         else:
             raise ValueError('Could not find data field in arg: {}'.format(arg))
 
@@ -132,6 +160,170 @@ class Caffe2Frontend(object):
         node_def.attribute.extend(attrs)
 
         return node_def
+
+    @classmethod
+    def _create_rnn_variant(cls, op_def, shapes):
+        node_def = make_node('LSTM', inputs = op_def.input, outputs = [op_def.output[0]], direction = 'bidirectional', )
+        node_def.name = op_def.name
+
+        return node_def
+
+    @classmethod
+    def _create_rnn_node(cls, ws, op, inputs):
+        merged_B = op[0].input[0]+'_LSTM_B'
+        merged_W = op[0].input[0]+'_LSTM_W'
+        merged_R = op[0].input[0]+'_LSTM_R'
+
+        fw_i2h_b = list(filter(lambda x: "_fw/i2h_b" in x, inputs))
+        bw_i2h_b = list(filter(lambda x: "_bw/i2h_b" in x, inputs))
+
+        fw_gates_t_b = list(filter(lambda x: "_fw/gates_t_b" in x, inputs))
+        bw_gates_t_b = list(filter(lambda x: "_bw/gates_t_b" in x, inputs))
+
+        fw_i2h_w = list(filter(lambda x: "_fw/i2h_w" in x, inputs))
+        bw_i2h_w = list(filter(lambda x: "_bw/i2h_w" in x, inputs))
+
+        fw_gates_t_w = list(filter(lambda x: "_fw/gates_t_w" in x, inputs))
+        bw_gates_t_w = list(filter(lambda x: "_bw/gates_t_w" in x, inputs))
+
+        cell_init = list(filter(lambda x: "/cell_init" in x, inputs))
+
+        hidden_init = list(filter(lambda x: "/hidden_init" in x, inputs))
+        hidden_size = ws.FetchBlob(hidden_init[0]).shape[0]
+
+        shape = ws.FetchBlob(fw_i2h_b[0]).shape
+
+        gates =  ['input', 'forget', 'output', 'cell']
+
+        allnames = (
+                (fw_i2h_b[0],     []),
+                (bw_i2h_b[0],     []),
+                (fw_gates_t_b[0], []),
+                (bw_gates_t_b[0], []),
+                (fw_i2h_w[0],     [(0,-1)]),
+                (bw_i2h_w[0],     [(0,-1)]),
+                (fw_gates_t_w[0], [(0,-1)]),
+                (bw_gates_t_w[0], [(0,-1)]))
+
+        for name, extra_dims in allnames:
+            gate_blobs = ['%s/%s' % (name, prefix) for prefix in gates]
+            reordered_gate_blobs = [gate_blobs[i] for i in [0, 2, 1, 3]]
+
+            for i, x in enumerate(gate_blobs):
+                dim0 = i * hidden_size, (i+1) * hidden_size
+                starts, ends = zip(dim0, *extra_dims)
+                sliceop = caffe2_core.CreateOperator("Slice",
+                        [name],
+                        [x],
+                        starts=starts,
+                        ends=ends)
+                ws.RunOperatorOnce(sliceop)
+
+            mergeop = caffe2_core.CreateOperator("Concat",
+                    reordered_gate_blobs,
+                    [ name, cls.dummy_name() ],
+                    axis=0)
+            ws.RunOperatorOnce(mergeop)
+
+            expenddim = caffe2_core.CreateOperator("ExpandDims", name, name, dims = [0])
+            ws.RunOperatorOnce(expenddim)
+
+        for name in itertools.chain(cell_init, hidden_init):
+            for i in range(0, 3 - len(ws.FetchBlob(name).shape)):
+                expenddim = caffe2_core.CreateOperator("ExpandDims", name, name, dims = [0])
+                ws.RunOperatorOnce(expenddim)
+
+        merge_op = caffe2_core.CreateOperator("Concat",
+                [ fw_i2h_w[0], bw_i2h_w[0] ],
+                [ merged_W, cls.dummy_name() ],
+                axis = 0)
+        ws.RunOperatorOnce(merge_op)
+
+        merge_op = caffe2_core.CreateOperator("Concat",
+                [ fw_gates_t_w[0], bw_gates_t_w[0] ],
+                [ merged_R, cls.dummy_name() ],
+                axis = 0)
+        ws.RunOperatorOnce(merge_op)
+
+        merge_op = caffe2_core.CreateOperator("Concat",
+                [ fw_i2h_b[0], fw_gates_t_b[0] ],
+                [ merged_B + "_fw",  cls.dummy_name() ],
+                axis = 1)
+        ws.RunOperatorOnce(merge_op)
+        merge_op = caffe2_core.CreateOperator("Concat",
+                [ bw_i2h_b[0], bw_gates_t_b[0] ],
+                [ merged_B + "_bw",  cls.dummy_name() ],
+                axis = 1)
+        ws.RunOperatorOnce(merge_op)
+        merge_op = caffe2_core.CreateOperator("Concat",
+                [ merged_B + "_fw", merged_B + "_bw" ],
+                [ merged_B, cls.dummy_name() ],
+                axis = 0)
+        ws.RunOperatorOnce(merge_op)
+
+        merged_cell_init = cls.dummy_name()
+        merge_op = caffe2_core.CreateOperator("Concat",
+                cell_init,
+                [ merged_cell_init, cls.dummy_name() ],
+                axis = 0)
+        ws.RunOperatorOnce(merge_op)
+
+        merged_hidden_init = cls.dummy_name()
+        merge_op = caffe2_core.CreateOperator("Concat",
+                hidden_init,
+                [ merged_hidden_init, cls.dummy_name() ],
+                axis = 0)
+        ws.RunOperatorOnce(merge_op)
+
+        removelist = []
+        removelist.append(fw_i2h_b[0])
+        removelist.append(bw_i2h_b[0])
+        removelist.append(fw_gates_t_b[0])
+        removelist.append(bw_gates_t_b[0])
+        removelist.append(fw_i2h_w[0])
+        removelist.append(bw_i2h_w[0])
+        removelist.append(fw_gates_t_w[0])
+        removelist.append(bw_gates_t_w[0])
+
+        addlist = []
+
+        addlist.append(merged_B)
+        addlist.append(merged_R)
+        addlist.append(merged_W)
+        addlist.append(merged_cell_init)
+        addlist.append(merged_hidden_init)
+
+        nodes = []
+
+        lstm_Y = cls.dummy_name();
+        nodes.append(make_node('LSTM',
+                    inputs      = [ op[0].input[0],  merged_W, merged_R, merged_B, op[1].input[5], merged_hidden_init, merged_cell_init ],
+                    outputs     = [ lstm_Y ],
+                    direction   = 'bidirectional',
+                    hidden_size = hidden_size))
+
+        transposed_name = cls.dummy_name();
+        nodes.append(make_node('Transpose',
+                    inputs  = [ lstm_Y ],
+                    outputs = [ transposed_name ],
+                    perm    = [ 0, 2, 1, 3 ]))
+
+        shape_name = cls.dummy_name();
+        shape = [ 0, 0, -1 ]
+        nodes.append(make_node('Constant',
+                    inputs  = [],
+                    outputs = [ shape_name ],
+                    value   = make_tensor(
+                        name      = 'const_tensor',
+                        data_type = TensorProto.INT64,
+                        dims      = [ len(shape) ],
+                        vals      = shape)))
+
+        nodes.append(make_node('Reshape',
+                    inputs = [ transposed_name, shape_name ],
+                    outputs = [ op[6].output[0] ]))
+
+        return nodes, removelist, addlist
 
     @classmethod
     def caffe2_op_to_onnx_node(cls, op_def, shapes):
@@ -221,7 +413,12 @@ class Caffe2Frontend(object):
         outputs = None
         if run_native_net:
             inputs = {}
+            internal_inputs = []
+            for op in init_net.op:
+                internal_inputs += op.output
             for name in predict_net.external_input:
+                if name in internal_inputs:
+                    continue
                 elem_type, shape = value_info[name]
                 inputs[name] = np.random.randn(*shape).astype(
                     mapping.TENSOR_TYPE_TO_NP_TYPE[elem_type])
@@ -239,19 +436,28 @@ class Caffe2Frontend(object):
 
         graph_def = GraphProto()
         graph_def.name = predict_net.name
-        graph_def.initializer.extend(initializer)
-        # This is a mapping from Caffe2 names to ONNX names
-        graph_def.input.extend(
-            make_tensor_value_info(
-                name=name,
-                elem_type=value_info[name][0],
-                shape=value_info[name][1])
-            for name in predict_net.external_input)
 
         cls._dummy_name.reset(cls._all_names_in_net(predict_net) | cls._all_names_in_net(init_net))
-
+        rolling_ops = []
+        rolling_inputs = []
+        addList = []
+        removeList=[]
         for op in predict_net.op:
             shapes = {}
+            if rolling_ops or op.type in cls._skipped_operators and any("i2h_w" in s for s in op.input):
+                rolling_ops.append(op)
+                for name in op.input:
+                    rolling_inputs.append(name)
+                # Bi-LSTM is created with 7 ops.
+                if len(rolling_ops) == 7:
+                    nodes, to_remove, to_add = cls._create_rnn_node(ws, rolling_ops, rolling_inputs)
+                    rolling_ops = []
+                    rolling_inputs = []
+                    graph_def.node.extend(nodes)
+                    removeList.extend(to_remove)
+                    addList.extend(to_add)
+                continue
+
             for name in itertools.chain(op.input, op.output):
                 if ws:
                     blob = ws.FetchBlob(name)
@@ -263,6 +469,28 @@ class Caffe2Frontend(object):
             graph_def.node.extend(nodes)
             graph_def.initializer.extend(const_tensors)
             graph_def.input.extend([cls._extract_value_info(tensor) for tensor in const_tensors])
+
+        initializer = [init for init in initializer if init.name not in removeList]
+
+        graph_def.initializer.extend(initializer)
+
+        graph_def.initializer.extend ([numpy_helper.from_array(ws.FetchBlob(name), name=name)
+                    for name in sorted(set(addList))])
+
+        # This is a mapping from Caffe2 names to ONNX names
+        graph_def.input.extend(
+            make_tensor_value_info(
+                name=name,
+                elem_type=value_info[name][0],
+                shape=value_info[name][1])
+            for name in predict_net.external_input if name not in removeList)
+
+        graph_def.input.extend(
+            make_tensor_value_info(
+                name=init.name,
+                elem_type=init.data_type,
+                shape=init.dims)
+            for init in graph_def.initializer if init.name in addList)
 
         all_output = set(sum((list(node.output) for node in graph_def.node),
                              [init.name for init in graph_def.initializer]))
@@ -335,6 +563,16 @@ class Caffe2Frontend(object):
 
         assert len(net.op) == len(ssa)
         for op, (versioned_inputs, versioned_outputs) in zip(net.op, ssa):
+            for name, version in versioned_inputs:
+                for arg in op.arg:
+                    if op.type in cls._rnn_operators and arg.name in cls._rnn_blob_name_args:
+                        if arg.s:
+                            arg.s = arg.s.replace(name.encode("utf8"), ssa_name(name, version, version_cnt).encode("utf8"))
+                        arg.strings[:] = [w.replace(name.encode("utf8"), ssa_name(name, version, version_cnt).encode("utf8")) for w in arg.strings]
+                    for nop in arg.n.op:
+                        nop.input[:] = [w.replace(name, ssa_name(name, version, version_cnt)).encode("utf8") for w in nop.input]
+                    arg.n.external_input[:] = [w.replace(name, ssa_name(name, version, version_cnt)).encode("utf8") for w in arg.n.external_input]
+
             op.input[:] = [ssa_name(name, version, version_cnt)
                            for name, version in versioned_inputs]
             op.output[:] = [ssa_name(name, version, version_cnt)
