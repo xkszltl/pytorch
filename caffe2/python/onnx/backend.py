@@ -2,7 +2,7 @@
 # Module caffe2.python.onnx.backend
 
 """Backend for running ONNX on Caffe2
-
+:
 To run this, you will need to have Caffe2 installed as well.
 """
 from __future__ import absolute_import
@@ -324,6 +324,7 @@ class Caffe2Backend(Backend):
         gates_hidden_size = num_gates * hidden_size
         bias_offset = 2 * direction_offset * gates_hidden_size
         weight_offset = direction_offset * gates_hidden_size
+
         Bi = init_net.Slice(B, name + Bi,
                             starts=[bias_offset + 0 * gates_hidden_size],
                             ends  =[bias_offset + 1 * gates_hidden_size])
@@ -341,8 +342,8 @@ class Caffe2Backend(Backend):
         for initial_state, name_suffix in initial_states_and_names:
             initial_states_sliced.append(
                 pred_mh.net.Slice(initial_state, name + name_suffix,
-                                  starts=[direction_offset + 0, 0, 0],
-                                  ends  =[direction_offset + 1,-1,-1]))
+                                  starts=[ 0],
+                                  ends  =[-1]))
 
         if direction_offset == 1:
             if sequence_lens is not None:
@@ -425,6 +426,7 @@ class Caffe2Backend(Backend):
             if x.name == W:
                 input_size = x.type.tensor_type.shape.dim[2].dim_value
                 break
+            
         else:
             raise RuntimeError("best-effort shape inference for RNN/GRU/LSTM failed")
 
@@ -512,7 +514,7 @@ class Caffe2Backend(Backend):
             outputs_f = make_rnn(0)
             outputs_b = make_rnn(1)
 
-            concatted_output, _ = pred_mh.net.Concat(
+            '''concatted_output, _ = pred_mh.net.Concat(
                 [outputs_f[0], outputs_b[0]], [cls.dummy_name(), cls.dummy_name()], axis=2)
             if sequence_lens is not None:
                 pred_mh.net.VariableLengthSequencePadding(
@@ -521,8 +523,9 @@ class Caffe2Backend(Backend):
             pred_mh.net.Transpose(reshaped_output, n.outputs[0], axes=[0,3,1,2])
             for i in range(1, len(n.outputs)):
                 pred_mh.net.Concat([outputs_f[i], outputs_b[i]],
-                                   [n.outputs[i], cls.dummy_name()], axis=0)
-
+                                   [n.outputs[i], cls.dummy_name()], axis=0)'''
+            pred_mh.net.Concat([outputs_f[0], outputs_b[0]],
+                    [n.outputs[0], cls.dummy_name()], axis=2)         
         # We want to decide whether to put all of our weight-reshaping
         # operators in the init net or the predict net. We can put
         # them in the init net iff the inputs to those operators are
@@ -613,6 +616,34 @@ class Caffe2Backend(Backend):
         ])
 
         return ops
+
+    @classmethod
+    def _create_merge_dim(cls, init_model, pred_model, onnx_node, opset_version):
+        """
+        This translator performs the basic translation of ONNX nodes into
+        Caffe2 operators.  Besides doing a straightforward marshalling from
+        one format to another, it also does these extra things:
+
+          - Renames operators based on '_renamed_operators'
+          - Renames attributes based on '_global_renamed_attrs' and
+            '_per_op_renamed_attrs'
+
+        If you're writing a custom translator, consider calling this first,
+        and then fixing things up further.
+        """
+        c2_op = caffe2_pb2.OperatorDef()
+
+        c2_op.input.extend(onnx_node.inputs)
+        c2_op.output.extend(onnx_node.outputs)
+        c2_op.name = onnx_node.name
+
+
+        onnx_op_type = 'MergeDim'
+        c2_op.type = cls._renamed_operators.get(onnx_op_type, onnx_op_type)
+        if not core.IsOperator(c2_op.type):
+            raise ValueError(
+                "Don't know how to translate op {}".format(onnx_op_type))
+        return c2_op
 
     @classmethod
     def _substitute_raw_value(cls, tp, raw_values_dict):

@@ -187,7 +187,8 @@ except ImportError:
 cwd = os.path.dirname(os.path.abspath(__file__))
 lib_path = os.path.join(cwd, "torch", "lib")
 third_party_path = os.path.join(cwd, "third_party")
-tmp_install_path = lib_path + "/tmp_install"
+tmp_install_path = distutils.sysconfig.get_python_lib()
+#lib_path + "/tmp_install"
 caffe2_build_dir = os.path.join(cwd, "build")
 # lib/pythonx.x/site-packages
 rel_site_packages = distutils.sysconfig.get_python_lib(prefix='')

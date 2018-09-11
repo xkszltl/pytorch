@@ -57,5 +57,8 @@ class Caffe2Rep(BackendRep):
             self.workspace.RunNet(self.predict_net.name)
         output_values = [self.workspace.FetchBlob(name)
                          for name in self.predict_net.external_output]
+        
+        #print(self.workspace.FetchBlob("OC2_DUMMY_7/i2h_b"))
+        #print(self.workspace.FetchBlob("sequence_1_LSTM_B"))
         return namedtupledict('Outputs',
                               self.predict_net.external_output)(*output_values)
