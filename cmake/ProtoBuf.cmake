@@ -174,7 +174,9 @@ function(caffe2_protobuf_generate_cpp_py srcs_var hdrs_var python_var)
     # directory and are building it as part of the Caffe2 build. If
     # points to an existing path, it is a no-op.
 
-    if (${CAFFE2_LINK_LOCAL_PROTOBUF})
+    # Protobuf DLL always need this patch (as for protobuf 3.6).
+
+    if (CAFFE2_LINK_LOCAL_PROTOBUF OR MSVC)
       # We need to rewrite the pb.h files to route GetEmptyStringAlreadyInited
       # through our wrapper in proto_utils so the memory location test
       # is correct.
